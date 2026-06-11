@@ -1,0 +1,29 @@
+# 📦 Dependencias (¡Lo más pesado!)
+node_modules/
+
+# 🔐 Variables de entorno (¡Tus contraseñas secretas!)
+.env
+.env.development
+.env.production
+.env.test
+
+# 🏗️ Carpetas de compilación (Lo que genera TypeScript)
+dist/
+build/
+
+# 📂 Carpetas locales temporales o de subidas
+temp/
+uploads/
+backups/
+
+# 📝 Logs de errores de Node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 🍎 Basura del sistema operativo (Mac/Windows)
+.DS_Store
+Thumbs.db
+
+# Editor local
+.vscode/
