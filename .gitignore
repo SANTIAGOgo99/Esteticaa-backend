@@ -24,3 +24,8 @@ yarn-error.log*
 # 🍎 Basura del sistema operativo (Mac/Windows)
 .DS_Store
 Thumbs.db
+
+# Editor local
+.vscode/
+
+.vercel

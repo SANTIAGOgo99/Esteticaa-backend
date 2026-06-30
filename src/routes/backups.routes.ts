@@ -2,14 +2,27 @@
 import { Router } from 'express';
 import { 
     createBackup, 
-    createAutoBackup, 
     listBackups, 
     deleteBackup, 
-    autoCleanupBackups 
+    downloadBackup, 
+    configureAutoBackup,
+    forceCleanup,
+    getSettingsAndLogs
 } from '../controllers/backups.controller';
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
 
 const router = Router();
+
+// ==========================================
+// ⚙️ RUTAS DE CONFIGURACIÓN Y LOGS (NUEVAS)
+// ==========================================
+
+// 0. OBTENER CONFIGURACIÓN: Trae la configuración de RAM, espacio ocupado y logs
+router.get('/settings', verifyToken, isAdmin, getSettingsAndLogs);
+
+// ==========================================
+// 🗄️ RUTAS CRUD DE RESPALDOS
+// ==========================================
 
 // 1. LISTAR: Trae los respaldos (manuales y automáticos) desde Cloudinary
 router.get('/', verifyToken, isAdmin, listBackups);
@@ -20,15 +33,17 @@ router.post('/', verifyToken, isAdmin, createBackup);
 // 3. ELIMINAR: Borra un archivo específico (recibe ?public_id=...)
 router.delete('/', verifyToken, isAdmin, deleteBackup);
 
+// 4. DESCARGAR: Ruta segura para descargar el archivo
+router.get('/download', verifyToken, isAdmin, downloadBackup);
+
 // ==========================================
-// 🤖 RUTAS AUTOMÁTICAS (Para Vercel Cron Jobs)
-// No usan verifyToken porque Vercel las llamará de forma interna y segura
+// 🤖 RUTAS DE RESPALDO AUTOMÁTICO
 // ==========================================
 
-// 4. CREAR AUTOMÁTICO: Sube el respaldo a la carpeta 'automaticos'
-router.post('/cron/create', createAutoBackup);
+// 5. PROGRAMAR AUTOMÁTICO: Recibe la configuración desde el Frontend para node-cron
+router.post('/schedule', verifyToken, isAdmin, configureAutoBackup);
 
-// 5. AUTO-LIMPIEZA: Borra los respaldos con más de 7 días de antigüedad
-router.post('/cron/cleanup', autoCleanupBackups);
+// 6. AUTO-LIMPIEZA FORZADA: Botón de emergencia para borrar respaldos viejos
+router.post('/cleanup', verifyToken, isAdmin, forceCleanup);
 
 export default router;

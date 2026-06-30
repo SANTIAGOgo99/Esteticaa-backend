@@ -13,15 +13,24 @@ const pool = new Pool({
     // 🌟 El escudo de seguridad obligatorio para Aiven
     ssl: {
         rejectUnauthorized: false 
-    }
+    },
+    // 🌟 NUEVO: Tiempos de espera para evitar bloqueos por microcortes de internet
+    connectionTimeoutMillis: 10000, // Da error si tarda más de 10 seg en conectar
+    idleTimeoutMillis: 30000        // Cierra conexiones inactivas para no saturar Aiven
 });
 
-pool.on('connect', () => {
-    console.log('✅ Base de Datos PostgreSQL conectada con éxito');
-});
+// ✅ PRUEBA DE CONEXIÓN ÚNICA (Evita el spam en consola y errores de TS)
+pool.query('SELECT NOW()')
+  .then(() => {
+      console.log('✅ Base de Datos PostgreSQL conectada con éxito');
+  })
+  .catch((err) => {
+      console.error('❌ Error conectando a PostgreSQL', err);
+  });
 
+// 🌟 FIX: Atrapa los microcortes de red en segundo plano para que el servidor no "crashee"
 pool.on('error', (err) => {
-    console.error('❌ Error inesperado en la BD:', err);
+    console.error('⚠️ Microcorte de red con la BD:', err.message);
 });
 
 export default pool;

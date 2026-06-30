@@ -12,22 +12,26 @@ import {
     importProductsCSV
 } from '../controllers/products.controller';
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
-import { upload } from '../middlewares/upload.middleware'; 
 
 const router = Router();
-const uploadRAM = multer({ storage: multer.memoryStorage() });
 
-// RUTAS GENERALES
-router.get('/', getProducts);
+// Configuramos Multer para guardar archivos en la memoria temporal (RAM)
+const upload = multer({ storage: multer.memoryStorage() });
+
+// RUTAS PUBLICAS
 router.get('/active', getActiveProducts);
 
 // RUTAS ADMIN
-// Importante: /import/csv va antes de /:id para que Express no se confunda
-router.post('/import/csv', verifyToken, isAdmin, uploadRAM.single('file'), importProductsCSV);
+router.get('/', verifyToken, isAdmin, getProducts);
 
+// Importante: /import/csv va antes de /:id para que Express no se confunda
+router.post('/import/csv', verifyToken, isAdmin, upload.single('file'), importProductsCSV);
+
+// Rutas con subida de imagen (upload.single('image'))
 router.post('/', verifyToken, isAdmin, upload.single('image'), createProduct);
-router.get('/:id', getProductById);
 router.put('/:id', verifyToken, isAdmin, upload.single('image'), updateProduct);
+
+router.get('/:id', verifyToken, isAdmin, getProductById);
 router.delete('/:id', verifyToken, isAdmin, deleteProduct);
 router.patch('/:id/toggle', verifyToken, isAdmin, toggleProductStatus);
 

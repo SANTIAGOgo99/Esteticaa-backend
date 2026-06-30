@@ -1,18 +1,42 @@
 // src/routes/appointments.routes.ts
 import { Router } from 'express';
-// Importamos a los 3 Chefs (¡Agregamos createAppointment!)
-import { getAppointments, updateAppointmentStatus, createAppointment } from '../controllers/appointments.controller';
+import {
+  getAppointments,
+  getMyAppointments,
+  cancelMyAppointment,
+  updateAppointmentStatus,
+  closeAppointment,
+  createAppointment,
+  getAvailableSlots,
+  getAvailabilityCalendar,
+} from '../controllers/appointments.controller';
+
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
 
 const router = Router();
 
-// 1. Ruta para obtener TODAS las citas (Solo Admin)
+// Obtener todas las citas para admin
 router.get('/', verifyToken, isAdmin, getAppointments);
 
-// 2. Ruta para cambiar el estado (Solo Admin)
+// Obtener las citas del cliente autenticado
+router.get('/my', verifyToken, getMyAppointments);
+
+// Obtener disponibilidad mensual para calendario de cliente
+router.get('/availability-calendar', verifyToken, getAvailabilityCalendar);
+
+// Obtener horarios disponibles y ocupados
+router.get('/slots', verifyToken, getAvailableSlots);
+
+// Cancelar cita propia del cliente
+router.patch('/:id/cancel', verifyToken, cancelMyAppointment);
+
+// Cerrar cita desde administracion
+router.patch('/:id/close', verifyToken, isAdmin, closeAppointment);
+
+// Cambiar estado de cita
 router.put('/:id/status', verifyToken, isAdmin, updateAppointmentStatus);
 
-// 3. NUEVA RUTA: Crear una cita (Cualquier usuario logueado con Token puede hacerlo)
+// Crear cita desde cliente
 router.post('/', verifyToken, createAppointment);
 
 export default router;
