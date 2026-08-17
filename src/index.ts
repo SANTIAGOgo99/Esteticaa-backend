@@ -13,6 +13,7 @@ import statsRoutes from './routes/stats.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import alexaRoutes from './routes/alexa.routes';
+import alexaOAuthRoutes from './routes/alexaOAuth.routes';
 
 dotenv.config();
 const app = express();
@@ -52,6 +53,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/alexa', alexaRoutes);
+app.use('/api/alexa/oauth', alexaOAuthRoutes);
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.get('/', (req, res) => {
