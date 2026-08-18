@@ -217,6 +217,93 @@ const checkAvailability = async (
 // =========================================================================
 // 1. OBTENER CITAS PARA EL PANEL/CALENDARIO
 // =========================================================================
+export const getMyAppointments = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const clientId = (req as any).user?.id;
+
+    if (!clientId) {
+      res.status(401).json({
+        message: 'No se pudo identificar al cliente',
+      });
+      return;
+    }
+
+    const query = `
+      SELECT
+        a.id,
+        a.client_id,
+        u.full_name AS cliente,
+        u.email AS cliente_email,
+        u.phone AS cliente_telefono,
+
+        a.service_id,
+        s.name AS servicio,
+        s.duration_minutes,
+        s.price AS service_price,
+
+        TO_CHAR(
+          a.appointment_date,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_date,
+
+        TO_CHAR(
+          a.appointment_date
+            + (s.duration_minutes || ' minutes')::interval,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_end,
+
+        a.status,
+
+        ${getCalendarStatusSQL},
+        ${getCalendarStatusLabelSQL},
+
+        a.total_amount,
+        a.deposit_amount,
+        (a.total_amount - a.deposit_amount) AS remaining_amount,
+
+        COALESCE(
+          a.appointment_origin,
+          'web'
+        ) AS appointment_origin,
+
+        a.created_at,
+        a.updated_at
+
+      FROM operations.appointments a
+
+      LEFT JOIN auth.users u
+        ON a.client_id = u.id
+
+      LEFT JOIN operations.services s
+        ON a.service_id = s.id
+
+      WHERE a.client_id = $1
+
+      ORDER BY a.appointment_date ASC;
+    `;
+
+    const result = await pool.query(query, [clientId]);
+
+    res.json({
+      total: result.rows.length,
+      appointments: result.rows,
+    });
+
+  } catch (error) {
+    console.error(
+      '🔥 Error al obtener las citas del cliente:',
+      error
+    );
+
+    res.status(500).json({
+      message:
+        'Error interno del servidor al cargar las citas del cliente',
+    });
+  }
+};
 
 export const getAppointments = async (
   req: Request,
