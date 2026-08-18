@@ -1,26 +1,72 @@
 // src/routes/appointments.routes.ts
+
 import { Router } from 'express';
+
 import {
   getAppointments,
+  getMyAppointments,
   updateAppointmentStatus,
   createAppointment,
   getAvailableSlots,
 } from '../controllers/appointments.controller';
 
-import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
+import {
+  verifyToken,
+  isAdmin,
+} from '../middlewares/auth.middleware';
 
 const router = Router();
 
-// Obtener todas las citas para admin
-router.get('/', verifyToken, isAdmin, getAppointments);
+// =======================================================
+// CITAS DEL CLIENTE LOGUEADO
+// =======================================================
 
-// Obtener horarios disponibles y ocupados
-router.get('/slots', verifyToken, getAvailableSlots);
+router.get(
+  '/my',
+  verifyToken,
+  getMyAppointments
+);
 
-// Cambiar estado de cita
-router.put('/:id/status', verifyToken, isAdmin, updateAppointmentStatus);
+// =======================================================
+// HORARIOS DISPONIBLES
+// =======================================================
 
-// Crear cita desde cliente
-router.post('/', verifyToken, createAppointment);
+router.get(
+  '/slots',
+  verifyToken,
+  getAvailableSlots
+);
+
+// =======================================================
+// TODAS LAS CITAS — ADMIN
+// =======================================================
+
+router.get(
+  '/',
+  verifyToken,
+  isAdmin,
+  getAppointments
+);
+
+// =======================================================
+// CREAR CITA DESDE CLIENTE / ALEXA
+// =======================================================
+
+router.post(
+  '/',
+  verifyToken,
+  createAppointment
+);
+
+// =======================================================
+// ACTUALIZAR ESTADO — ADMIN
+// =======================================================
+
+router.put(
+  '/:id/status',
+  verifyToken,
+  isAdmin,
+  updateAppointmentStatus
+);
 
 export default router;
