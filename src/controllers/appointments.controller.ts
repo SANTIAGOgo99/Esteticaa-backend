@@ -1,4 +1,3 @@
-// src/controllers/appointments.controller.ts
 import { Request, Response } from 'express';
 import pool from '../config/db';
 
@@ -166,7 +165,10 @@ const checkAvailability = async (
     };
   }
 
-  const dateOnly = appointmentDate.split('T')[0] || appointmentDate.split(' ')[0];
+  const dateOnly =
+    appointmentDate.split('T')[0] ||
+    appointmentDate.split(' ')[0];
+
   const openDate = buildDateWithTime(dateOnly, businessHours.open);
   const closeDate = buildDateWithTime(dateOnly, businessHours.close);
 
@@ -216,7 +218,10 @@ const checkAvailability = async (
 // 1. OBTENER CITAS PARA EL PANEL/CALENDARIO
 // =========================================================================
 
-export const getAppointments = async (req: Request, res: Response): Promise<void> => {
+export const getAppointments = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { date_from, date_to, status, origin } = req.query;
 
@@ -225,12 +230,16 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 
     if (date_from) {
       params.push(date_from);
-      conditions.push(`a.appointment_date >= $${params.length}::timestamp`);
+      conditions.push(
+        `a.appointment_date >= $${params.length}::timestamp`
+      );
     }
 
     if (date_to) {
       params.push(date_to);
-      conditions.push(`a.appointment_date <= $${params.length}::timestamp`);
+      conditions.push(
+        `a.appointment_date <= $${params.length}::timestamp`
+      );
     }
 
     if (status) {
@@ -240,10 +249,15 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 
     if (origin) {
       params.push(origin);
-      conditions.push(`a.appointment_origin = $${params.length}`);
+      conditions.push(
+        `a.appointment_origin = $${params.length}`
+      );
     }
 
-    const whereSQL = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereSQL =
+      conditions.length > 0
+        ? `WHERE ${conditions.join(' AND ')}`
+        : '';
 
     const query = `
       SELECT 
@@ -258,8 +272,22 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
         s.duration_minutes,
         s.price AS service_price,
 
-        a.appointment_date,
-        (a.appointment_date + (s.duration_minutes || ' minutes')::interval) AS appointment_end,
+        -- ==========================================================
+        -- IMPORTANTE:
+        -- Se devuelve como texto SIN zona horaria.
+        -- Evita que una cita de 11:00 aparezca como 05:00
+        -- al convertirla el navegador.
+        -- ==========================================================
+        TO_CHAR(
+          a.appointment_date,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_date,
+
+        TO_CHAR(
+          a.appointment_date
+            + (s.duration_minutes || ' minutes')::interval,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_end,
 
         a.status,
         ${getCalendarStatusSQL},
@@ -269,14 +297,22 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
         a.deposit_amount,
         (a.total_amount - a.deposit_amount) AS remaining_amount,
 
-        COALESCE(a.appointment_origin, 'web') AS appointment_origin,
+        COALESCE(
+          a.appointment_origin,
+          'web'
+        ) AS appointment_origin,
 
         a.created_at,
         a.updated_at
+
       FROM operations.appointments a
-      LEFT JOIN auth.users u ON a.client_id = u.id
-      LEFT JOIN operations.services s ON a.service_id = s.id
+      LEFT JOIN auth.users u
+        ON a.client_id = u.id
+      LEFT JOIN operations.services s
+        ON a.service_id = s.id
+
       ${whereSQL}
+
       ORDER BY a.appointment_date ASC;
     `;
 
@@ -288,6 +324,7 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
     });
   } catch (error) {
     console.error('🔥 Error al obtener las citas:', error);
+
     res.status(500).json({
       message: 'Error interno del servidor al cargar las citas',
     });
@@ -298,13 +335,17 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 // 2. CONSULTAR DISPONIBILIDAD DE UN HORARIO
 // =========================================================================
 
-export const getAppointmentAvailability = async (req: Request, res: Response): Promise<void> => {
+export const getAppointmentAvailability = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { appointment_date, service_id } = req.query;
 
     if (!appointment_date || !service_id) {
       res.status(400).json({
-        message: 'appointment_date y service_id son obligatorios',
+        message:
+          'appointment_date y service_id son obligatorios',
       });
       return;
     }
@@ -316,9 +357,14 @@ export const getAppointmentAvailability = async (req: Request, res: Response): P
 
     res.json(availability);
   } catch (error) {
-    console.error('🔥 Error al consultar disponibilidad:', error);
+    console.error(
+      '🔥 Error al consultar disponibilidad:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al consultar disponibilidad',
+      message:
+        'Error interno al consultar disponibilidad',
     });
   }
 };
@@ -326,7 +372,11 @@ export const getAppointmentAvailability = async (req: Request, res: Response): P
 // =========================================================================
 // 3. OBTENER HORARIOS DISPONIBLES POR DÍA Y SERVICIO
 // =========================================================================
-export const getAvailableSlots = async (req: Request, res: Response): Promise<void> => {
+
+export const getAvailableSlots = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { date, service_id } = req.query;
 
@@ -339,7 +389,13 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
 
     const serviceResult = await pool.query(
       `
-      SELECT id, name, description, price, duration_minutes, is_active
+      SELECT
+        id,
+        name,
+        description,
+        price,
+        duration_minutes,
+        is_active
       FROM operations.services
       WHERE id = $1;
       `,
@@ -347,7 +403,9 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
     );
 
     if (serviceResult.rows.length === 0) {
-      res.status(404).json({ message: 'Servicio no encontrado' });
+      res.status(404).json({
+        message: 'Servicio no encontrado',
+      });
       return;
     }
 
@@ -362,7 +420,8 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
         service,
         available_slots: [],
         all_slots: [],
-        message: 'La estética no trabaja los domingos',
+        message:
+          'La estética no trabaja los domingos',
       });
       return;
     }
@@ -372,13 +431,21 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
         ? { open: '10:00', close: '18:00' }
         : { open: '11:00', close: '19:00' };
 
-    const addMinutes = (fecha: Date, minutos: number) => {
-      return new Date(fecha.getTime() + minutos * 60000);
+    const addMinutesLocal = (
+      fecha: Date,
+      minutos: number
+    ) => {
+      return new Date(
+        fecha.getTime() + minutos * 60000
+      );
     };
 
-    const pad = (n: number) => String(n).padStart(2, '0');
+    const pad = (n: number) =>
+      String(n).padStart(2, '0');
 
-    const formatDateForPostgres = (fecha: Date) => {
+    const formatDateForPostgresLocal = (
+      fecha: Date
+    ) => {
       const year = fecha.getFullYear();
       const month = pad(fecha.getMonth() + 1);
       const day = pad(fecha.getDate());
@@ -389,8 +456,13 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
       return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
     };
 
-    const openDate = new Date(`${date}T${businessHours.open}:00`);
-    const closeDate = new Date(`${date}T${businessHours.close}:00`);
+    const openDate = new Date(
+      `${date}T${businessHours.open}:00`
+    );
+
+    const closeDate = new Date(
+      `${date}T${businessHours.close}:00`
+    );
 
     const allSlots = [];
     const availableSlots = [];
@@ -399,19 +471,30 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
 
     while (current < closeDate) {
       const startDate = new Date(current);
-      const endDate = addMinutes(startDate, Number(service.duration_minutes));
+
+      const endDate = addMinutesLocal(
+        startDate,
+        Number(service.duration_minutes)
+      );
 
       if (endDate > closeDate) {
         allSlots.push({
-          time: formatDateForPostgres(startDate).substring(11, 16),
-          appointment_date: formatDateForPostgres(startDate),
-          appointment_end: formatDateForPostgres(endDate),
+          time: formatDateForPostgresLocal(startDate)
+            .substring(11, 16),
+
+          appointment_date:
+            formatDateForPostgresLocal(startDate),
+
+          appointment_end:
+            formatDateForPostgresLocal(endDate),
+
           available: false,
           conflicts: 0,
-          reason: 'El servicio ya no cabe antes del cierre',
+          reason:
+            'El servicio ya no cabe antes del cierre',
         });
 
-        current = addMinutes(current, 30);
+        current = addMinutesLocal(current, 30);
         continue;
       }
 
@@ -419,26 +502,50 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
         `
         SELECT COUNT(*)::int AS total
         FROM operations.appointments a
-        JOIN operations.services s ON s.id = a.service_id
+        JOIN operations.services s
+          ON s.id = a.service_id
+
         WHERE a.status IN ('pending', 'confirmed')
+
         AND a.appointment_date < $2::timestamp
-        AND (a.appointment_date + (s.duration_minutes || ' minutes')::interval) > $1::timestamp;
+
+        AND (
+          a.appointment_date
+          + (s.duration_minutes || ' minutes')::interval
+        ) > $1::timestamp;
         `,
         [
-          formatDateForPostgres(startDate),
-          formatDateForPostgres(endDate),
+          formatDateForPostgresLocal(startDate),
+          formatDateForPostgresLocal(endDate),
         ]
       );
 
-      const conflicts = Number(conflictResult.rows[0].total);
+      const conflicts = Number(
+        conflictResult.rows[0].total
+      );
 
       const slot = {
-        time: formatDateForPostgres(startDate).substring(11, 16),
-        appointment_date: formatDateForPostgres(startDate),
-        appointment_end: formatDateForPostgres(endDate),
-        available: conflicts < 2,
+        time:
+          formatDateForPostgresLocal(startDate)
+            .substring(11, 16),
+
+        appointment_date:
+          formatDateForPostgresLocal(startDate),
+
+        appointment_end:
+          formatDateForPostgresLocal(endDate),
+
+        available:
+          conflicts <
+          MAX_SIMULTANEOUS_APPOINTMENTS,
+
         conflicts,
-        reason: conflicts < 2 ? 'Disponible' : 'Ocupado',
+
+        reason:
+          conflicts <
+          MAX_SIMULTANEOUS_APPOINTMENTS
+            ? 'Disponible'
+            : 'Ocupado',
       };
 
       allSlots.push(slot);
@@ -447,7 +554,7 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
         availableSlots.push(slot);
       }
 
-      current = addMinutes(current, 30);
+      current = addMinutesLocal(current, 30);
     }
 
     res.json({
@@ -458,19 +565,26 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
       all_slots: allSlots,
     });
   } catch (error) {
-    console.error('🔥 Error al obtener horarios:', error);
+    console.error(
+      '🔥 Error al obtener horarios:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al obtener horarios',
+      message:
+        'Error interno al obtener horarios',
     });
   }
 };
 
-
 // =========================================================================
-// 4. CREAR CITA DESDE CLIENTE WEB
+// 4. CREAR CITA DESDE CLIENTE WEB / ALEXA
 // =========================================================================
 
-export const createAppointment = async (req: Request, res: Response): Promise<void> => {
+export const createAppointment = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const {
       service_id,
@@ -482,22 +596,25 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     if (!client_id) {
       res.status(401).json({
-        message: 'No se pudo identificar al cliente desde el token',
+        message:
+          'No se pudo identificar al cliente desde el token',
       });
       return;
     }
 
     if (!service_id || !appointment_date) {
       res.status(400).json({
-        message: 'service_id y appointment_date son obligatorios',
+        message:
+          'service_id y appointment_date son obligatorios',
       });
       return;
     }
 
-    const availability = await checkAvailability(
-      appointment_date,
-      Number(service_id)
-    );
+    const availability =
+      await checkAvailability(
+        appointment_date,
+        Number(service_id)
+      );
 
     if (!availability.available) {
       res.status(409).json({
@@ -507,7 +624,9 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const totalAmount = Number(availability.service.price);
+    const totalAmount = Number(
+      availability.service.price
+    );
 
     const query = `
       INSERT INTO operations.appointments (
@@ -520,8 +639,34 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
         deposit_amount,
         appointment_origin
       )
-      VALUES ($1, NULL, $2, $3, 'pending', $4, $5, 'web')
-      RETURNING *;
+      VALUES (
+        $1,
+        NULL,
+        $2,
+        $3::timestamp,
+        'pending',
+        $4,
+        $5,
+        'web'
+      )
+
+      RETURNING
+        id,
+        client_id,
+        stylist_id,
+        service_id,
+
+        TO_CHAR(
+          appointment_date,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_date,
+
+        status,
+        total_amount,
+        deposit_amount,
+        appointment_origin,
+        created_at,
+        updated_at;
     `;
 
     const result = await pool.query(query, [
@@ -533,13 +678,19 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     ]);
 
     res.status(201).json({
-      message: 'Cita registrada correctamente desde la web',
+      message:
+        'Cita registrada correctamente desde la web',
       appointment: result.rows[0],
     });
   } catch (error) {
-    console.error('🔥 Error al crear la cita:', error);
+    console.error(
+      '🔥 Error al crear la cita:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno del servidor al crear la cita',
+      message:
+        'Error interno del servidor al crear la cita',
     });
   }
 };
@@ -548,7 +699,10 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 // 5. CREAR CITA MANUAL DESDE ADMINISTRADOR
 // =========================================================================
 
-export const createManualAppointment = async (req: Request, res: Response): Promise<void> => {
+export const createManualAppointment = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const {
       client_id,
@@ -557,17 +711,23 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
       deposit_amount = 0,
     } = req.body;
 
-    if (!client_id || !service_id || !appointment_date) {
+    if (
+      !client_id ||
+      !service_id ||
+      !appointment_date
+    ) {
       res.status(400).json({
-        message: 'client_id, service_id y appointment_date son obligatorios',
+        message:
+          'client_id, service_id y appointment_date son obligatorios',
       });
       return;
     }
 
-    const availability = await checkAvailability(
-      appointment_date,
-      Number(service_id)
-    );
+    const availability =
+      await checkAvailability(
+        appointment_date,
+        Number(service_id)
+      );
 
     if (!availability.available) {
       res.status(409).json({
@@ -577,7 +737,9 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
       return;
     }
 
-    const totalAmount = Number(availability.service.price);
+    const totalAmount = Number(
+      availability.service.price
+    );
 
     const query = `
       INSERT INTO operations.appointments (
@@ -590,8 +752,34 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
         deposit_amount,
         appointment_origin
       )
-      VALUES ($1, NULL, $2, $3, 'pending', $4, $5, 'presencial')
-      RETURNING *;
+      VALUES (
+        $1,
+        NULL,
+        $2,
+        $3::timestamp,
+        'pending',
+        $4,
+        $5,
+        'presencial'
+      )
+
+      RETURNING
+        id,
+        client_id,
+        stylist_id,
+        service_id,
+
+        TO_CHAR(
+          appointment_date,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_date,
+
+        status,
+        total_amount,
+        deposit_amount,
+        appointment_origin,
+        created_at,
+        updated_at;
     `;
 
     const result = await pool.query(query, [
@@ -603,13 +791,19 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
     ]);
 
     res.status(201).json({
-      message: 'Cita registrada manualmente como presencial',
+      message:
+        'Cita registrada manualmente como presencial',
       appointment: result.rows[0],
     });
   } catch (error) {
-    console.error('🔥 Error al crear cita manual:', error);
+    console.error(
+      '🔥 Error al crear cita manual:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno del servidor al crear cita manual',
+      message:
+        'Error interno del servidor al crear cita manual',
     });
   }
 };
@@ -618,7 +812,10 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
 // 6. ACTUALIZAR ESTADO DE UNA CITA
 // =========================================================================
 
-export const updateAppointmentStatus = async (req: Request, res: Response): Promise<void> => {
+export const updateAppointmentStatus = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { id } = req.params;
   let { status } = req.body;
 
@@ -647,7 +844,10 @@ export const updateAppointmentStatus = async (req: Request, res: Response): Prom
       RETURNING *;
     `;
 
-    const result = await pool.query(query, [status, id]);
+    const result = await pool.query(
+      query,
+      [status, id]
+    );
 
     if (result.rows.length === 0) {
       res.status(404).json({
@@ -657,13 +857,19 @@ export const updateAppointmentStatus = async (req: Request, res: Response): Prom
     }
 
     res.json({
-      message: 'Estado actualizado correctamente',
+      message:
+        'Estado actualizado correctamente',
       appointment: result.rows[0],
     });
   } catch (error) {
-    console.error('🔥 Error al actualizar la cita:', error);
+    console.error(
+      '🔥 Error al actualizar la cita:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al actualizar la cita',
+      message:
+        'Error interno al actualizar la cita',
     });
   }
 };
@@ -672,21 +878,28 @@ export const updateAppointmentStatus = async (req: Request, res: Response): Prom
 // 7. CERRAR CITA: FINALIZADA O NO ASISTIÓ
 // =========================================================================
 
-export const closeAppointment = async (req: Request, res: Response): Promise<void> => {
+export const closeAppointment = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { id } = req.params;
   const { outcome } = req.body;
 
   try {
     if (!outcome) {
       res.status(400).json({
-        message: 'El resultado de cierre es obligatorio: completed o no_show',
+        message:
+          'El resultado de cierre es obligatorio: completed o no_show',
       });
       return;
     }
 
-    if (!['completed', 'no_show'].includes(outcome)) {
+    if (
+      !['completed', 'no_show'].includes(outcome)
+    ) {
       res.status(400).json({
-        message: 'Resultado no válido. Usa completed o no_show',
+        message:
+          'Resultado no válido. Usa completed o no_show',
       });
       return;
     }
@@ -698,7 +911,10 @@ export const closeAppointment = async (req: Request, res: Response): Promise<voi
       RETURNING *;
     `;
 
-    const result = await pool.query(query, [outcome, id]);
+    const result = await pool.query(
+      query,
+      [outcome, id]
+    );
 
     if (result.rows.length === 0) {
       res.status(404).json({
@@ -712,11 +928,13 @@ export const closeAppointment = async (req: Request, res: Response): Promise<voi
     let message = '';
 
     if (outcome === 'completed') {
-      message = 'Cita marcada como finalizada. El servicio sí se realizó.';
+      message =
+        'Cita marcada como finalizada. El servicio sí se realizó.';
     }
 
     if (outcome === 'no_show') {
-      message = 'Cita marcada como no asistió. No se registra como servicio realizado.';
+      message =
+        'Cita marcada como no asistió. No se registra como servicio realizado.';
     }
 
     res.json({
@@ -724,9 +942,14 @@ export const closeAppointment = async (req: Request, res: Response): Promise<voi
       appointment,
     });
   } catch (error) {
-    console.error('🔥 Error al cerrar la cita:', error);
+    console.error(
+      '🔥 Error al cerrar la cita:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al cerrar la cita',
+      message:
+        'Error interno al cerrar la cita',
     });
   }
 };
@@ -735,8 +958,12 @@ export const closeAppointment = async (req: Request, res: Response): Promise<voi
 // 8. EDITAR FECHA/SERVICIO DE UNA CITA
 // =========================================================================
 
-export const updateAppointment = async (req: Request, res: Response): Promise<void> => {
+export const updateAppointment = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { id } = req.params;
+
   const {
     service_id,
     appointment_date,
@@ -750,7 +977,10 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       WHERE id = $1;
     `;
 
-    const currentResult = await pool.query(currentQuery, [id]);
+    const currentResult = await pool.query(
+      currentQuery,
+      [id]
+    );
 
     if (currentResult.rows.length === 0) {
       res.status(404).json({
@@ -759,16 +989,23 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const currentAppointment = currentResult.rows[0];
+    const currentAppointment =
+      currentResult.rows[0];
 
-    const newServiceId = service_id || currentAppointment.service_id;
-    const newAppointmentDate = appointment_date || currentAppointment.appointment_date;
+    const newServiceId =
+      service_id ||
+      currentAppointment.service_id;
 
-    const availability = await checkAvailability(
-      String(newAppointmentDate),
-      Number(newServiceId),
-      Number(id)
-    );
+    const newAppointmentDate =
+      appointment_date ||
+      currentAppointment.appointment_date;
+
+    const availability =
+      await checkAvailability(
+        String(newAppointmentDate),
+        Number(newServiceId),
+        Number(id)
+      );
 
     if (!availability.available) {
       res.status(409).json({
@@ -778,18 +1015,40 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const newTotalAmount = Number(availability.service.price);
+    const newTotalAmount = Number(
+      availability.service.price
+    );
 
     const query = `
       UPDATE operations.appointments
+
       SET
         service_id = $1,
-        appointment_date = $2,
+        appointment_date = $2::timestamp,
         total_amount = $3,
-        deposit_amount = COALESCE($4, deposit_amount),
+        deposit_amount =
+          COALESCE($4, deposit_amount),
         status = 'pending'
+
       WHERE id = $5
-      RETURNING *;
+
+      RETURNING
+        id,
+        client_id,
+        stylist_id,
+        service_id,
+
+        TO_CHAR(
+          appointment_date,
+          'YYYY-MM-DD"T"HH24:MI:SS'
+        ) AS appointment_date,
+
+        status,
+        total_amount,
+        deposit_amount,
+        appointment_origin,
+        created_at,
+        updated_at;
     `;
 
     const result = await pool.query(query, [
@@ -801,13 +1060,19 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     ]);
 
     res.json({
-      message: 'Cita actualizada correctamente',
+      message:
+        'Cita actualizada correctamente',
       appointment: result.rows[0],
     });
   } catch (error) {
-    console.error('🔥 Error al editar cita:', error);
+    console.error(
+      '🔥 Error al editar cita:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al editar la cita',
+      message:
+        'Error interno al editar la cita',
     });
   }
 };
@@ -816,7 +1081,10 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
 // 9. CANCELAR CITA
 // =========================================================================
 
-export const cancelAppointment = async (req: Request, res: Response): Promise<void> => {
+export const cancelAppointment = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { id } = req.params;
 
   try {
@@ -827,7 +1095,10 @@ export const cancelAppointment = async (req: Request, res: Response): Promise<vo
       RETURNING *;
     `;
 
-    const result = await pool.query(query, [id]);
+    const result = await pool.query(
+      query,
+      [id]
+    );
 
     if (result.rows.length === 0) {
       res.status(404).json({
@@ -837,13 +1108,19 @@ export const cancelAppointment = async (req: Request, res: Response): Promise<vo
     }
 
     res.json({
-      message: 'Cita cancelada correctamente',
+      message:
+        'Cita cancelada correctamente',
       appointment: result.rows[0],
     });
   } catch (error) {
-    console.error('🔥 Error al cancelar cita:', error);
+    console.error(
+      '🔥 Error al cancelar cita:',
+      error
+    );
+
     res.status(500).json({
-      message: 'Error interno al cancelar la cita',
+      message:
+        'Error interno al cancelar la cita',
     });
   }
 };
