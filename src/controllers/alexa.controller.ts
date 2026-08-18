@@ -60,8 +60,8 @@ const tokenizeServiceText = (value: unknown): string[] => {
 
 const getActiveServices = async () => {
   const result = await pool.query(`
-    SELECT id, name, description, duration_minutes, price, category
-    FROM operations.services
+    SELECT id, name, description, duration_minutes, price, category, image_url
+FROM operations.services
     WHERE is_active = TRUE
     ORDER BY category ASC, name ASC
   `);
@@ -71,8 +71,8 @@ const getActiveServices = async () => {
 
 const getActiveProducts = async () => {
   const result = await pool.query(`
-    SELECT id, name, brand, category, price, stock, size
-    FROM inventory.products
+    SELECT id, name, brand, category, price, stock, size, image_url
+FROM inventory.products
     WHERE is_active = TRUE AND stock > 0
     ORDER BY name ASC
   `);
