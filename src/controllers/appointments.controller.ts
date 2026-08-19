@@ -229,6 +229,17 @@ const checkAvailability = async (
     };
   }
 
+  const durationMinutes = Number(service.duration_minutes);
+
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return {
+      available: false,
+      reason: 'El servicio tiene una duración inválida en el sistema',
+      service,
+      conflicts: 0,
+    };
+  }
+
   const startDate = parseDateWithoutTimezone(appointmentDate);
 
   if (!isValidLocalDateTime(startDate)) {
@@ -260,7 +271,7 @@ const checkAvailability = async (
     };
   }
 
-  const endDate = addMinutes(startDate, Number(service.duration_minutes));
+  const endDate = addMinutes(startDate, durationMinutes);
 
   const businessHours = getBusinessHoursByDate(startDate);
 
@@ -294,6 +305,9 @@ const checkAvailability = async (
     FROM operations.appointments a
     JOIN operations.services s ON s.id = a.service_id
     WHERE a.status IN ('pending', 'confirmed')
+    -- Solo bloqueamos citas del mismo día. Evita que datos antiguos o
+    -- duraciones incorrectas de otros días bloqueen toda la agenda.
+    AND a.appointment_date::date = $1::timestamp::date
     AND a.appointment_date < $2::timestamp
     AND (a.appointment_date + (s.duration_minutes || ' minutes')::interval) > $1::timestamp
   `;
@@ -615,6 +629,17 @@ export const getAvailableSlots = async (
       return;
     }
 
+    const durationMinutes = Number(service.duration_minutes);
+
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      res.status(400).json({
+        message: 'El servicio tiene una duración inválida en el sistema',
+        available_slots: [],
+        all_slots: [],
+      });
+      return;
+    }
+
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
       res.status(400).json({
         message: 'La fecha debe tener el formato YYYY-MM-DD',
@@ -709,7 +734,7 @@ export const getAvailableSlots = async (
 
       const endDate = addMinutesLocal(
         startDate,
-        Number(service.duration_minutes)
+        durationMinutes
       );
 
       // Si la fecha solicitada es hoy, no mostramos como disponibles
@@ -767,6 +792,9 @@ export const getAvailableSlots = async (
 
         WHERE a.status IN ('pending', 'confirmed')
 
+        -- La disponibilidad se calcula únicamente contra citas del mismo día.
+        AND a.appointment_date::date = $1::timestamp::date
+
         AND a.appointment_date < $2::timestamp
 
         AND (
@@ -823,6 +851,9 @@ export const getAvailableSlots = async (
       business_hours: businessHours,
       available_slots: availableSlots,
       all_slots: allSlots,
+      message: availableSlots.length
+        ? `${availableSlots.length} horarios disponibles`
+        : 'No hay horarios disponibles para esa fecha',
     });
   } catch (error) {
     console.error(
