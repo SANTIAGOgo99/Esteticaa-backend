@@ -8,6 +8,11 @@ import {
   updateAppointmentStatus,
   createAppointment,
   getAvailableSlots,
+  cancelAppointment,
+  updateAppointment,
+  createManualAppointment,
+  closeAppointment,
+  getAppointmentAvailability,
 } from '../controllers/appointments.controller';
 
 import {
@@ -25,6 +30,16 @@ router.get(
   '/my',
   verifyToken,
   getMyAppointments
+);
+
+// =======================================================
+// CONSULTAR DISPONIBILIDAD DE UN HORARIO
+// =======================================================
+
+router.get(
+  '/availability',
+  verifyToken,
+  getAppointmentAvailability
 );
 
 // =======================================================
@@ -59,6 +74,27 @@ router.post(
 );
 
 // =======================================================
+// CREAR CITA MANUAL — ADMIN
+// =======================================================
+
+router.post(
+  '/manual',
+  verifyToken,
+  isAdmin,
+  createManualAppointment
+);
+
+// =======================================================
+// EDITAR CITA
+// =======================================================
+
+router.put(
+  '/:id',
+  verifyToken,
+  updateAppointment
+);
+
+// =======================================================
 // ACTUALIZAR ESTADO — ADMIN
 // =======================================================
 
@@ -67,6 +103,30 @@ router.put(
   verifyToken,
   isAdmin,
   updateAppointmentStatus
+);
+
+// =======================================================
+// CERRAR CITA — ADMIN
+// completed / no_show
+// =======================================================
+
+router.put(
+  '/:id/close',
+  verifyToken,
+  isAdmin,
+  closeAppointment
+);
+
+// =======================================================
+// CANCELAR CITA
+// Esta es la ruta que faltaba y que usa tu frontend:
+// PATCH /api/appointments/:id/cancel
+// =======================================================
+
+router.patch(
+  '/:id/cancel',
+  verifyToken,
+  cancelAppointment
 );
 
 export default router;
