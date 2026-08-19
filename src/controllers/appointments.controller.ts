@@ -5,7 +5,7 @@ import pool from '../config/db';
 const VALID_DB_STATUSES = ['pending', 'confirmed', 'completed', 'canceled', 'no_show'];
 
 // Orígenes permitidos
-const VALID_ORIGINS = ['web', 'presencial', 'alexa'];
+const VALID_ORIGINS = ['web', 'presencial'];
 
 // Capacidad de atención de la estética
 // Regla actual: una sola cita puede ocupar un mismo rango de horario.
@@ -861,9 +861,11 @@ export const createAppointment = async (
       headerOrigin || appointment_origin || 'web'
     ).toLowerCase();
 
-    const origin = VALID_ORIGINS.includes(requestedOrigin)
-      ? requestedOrigin
-      : 'web';
+    // La BD actual solo admite web y presencial.
+    // Alexa usa este mismo endpoint, pero por ahora se almacena como web
+    // para no romper la restriccion existente en appointment_origin.
+    const isAlexaRequest = requestedOrigin === 'alexa';
+    const origin = requestedOrigin === 'presencial' ? 'presencial' : 'web';
 
     const client_id = (req as any).user?.id;
 
@@ -976,7 +978,7 @@ export const createAppointment = async (
 
     res.status(201).json({
       message:
-        origin === 'alexa'
+        isAlexaRequest
           ? 'Cita registrada correctamente desde Alexa'
           : 'Cita registrada correctamente desde la web',
       appointment: result.rows[0],
