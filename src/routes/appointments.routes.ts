@@ -9,6 +9,7 @@ import {
   createAppointment,
   getAvailableSlots,
   getAvailabilityCalendar,
+  rescheduleAppointment,
 } from '../controllers/appointments.controller';
 
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
@@ -29,6 +30,9 @@ router.get('/slots', verifyToken, getAvailableSlots);
 
 // Cancelar cita propia del cliente
 router.patch('/:id/cancel', verifyToken, cancelMyAppointment);
+
+// Reagendar cita propia o, para administradores, cualquier cita
+router.patch('/:id/reschedule', verifyToken, rescheduleAppointment);
 
 // Cerrar cita desde administracion
 router.patch('/:id/close', verifyToken, isAdmin, closeAppointment);

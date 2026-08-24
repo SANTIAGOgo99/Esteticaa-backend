@@ -1,6 +1,14 @@
 // src/controllers/appointments.controller.ts
 import { Request, Response } from 'express';
 import pool from '../config/db';
+import {
+  MAX_SIMULTANEOUS_APPOINTMENTS,
+  checkAppointmentAvailability,
+  generateCandidateTimes,
+  getBusinessHours,
+  getLocalNow,
+  Queryable,
+} from '../services/agenda.service';
 
 // Estados reales guardados en la base de datos
 const VALID_DB_STATUSES = ['pending', 'confirmed', 'completed', 'canceled', 'no_show'];
@@ -8,22 +16,8 @@ const VALID_DB_STATUSES = ['pending', 'confirmed', 'completed', 'canceled', 'no_
 // Orígenes permitidos
 const VALID_ORIGINS = ['web', 'presencial'];
 
-// Capacidad de atención de la estética
-// Como actualmente trabajan 2 personas, se permiten máximo 2 citas al mismo tiempo.
-const MAX_SIMULTANEOUS_APPOINTMENTS = 2;
 const MIN_CLIENT_CANCEL_HOURS = 24;
-
-// Horarios base del negocio
-const BUSINESS_HOURS = {
-  weekday: {
-    open: '09:00',
-    close: '19:00',
-  },
-  saturday: {
-    open: '09:00',
-    close: '19:00',
-  },
-};
+const MIN_RESCHEDULE_HOURS = 24;
 
 // =========================================================================
 // FUNCIONES AUXILIARES
@@ -88,22 +82,7 @@ const parseMonthParam = (monthParam?: string) => {
   };
 };
 
-const getBusinessHoursByDate = (date: Date) => {
-  const day = date.getDay();
-
-  // Domingo cerrado
-  if (day === 0) {
-    return null;
-  }
-
-  // Sábado
-  if (day === 6) {
-    return BUSINESS_HOURS.saturday;
-  }
-
-  // Lunes a viernes
-  return BUSINESS_HOURS.weekday;
-};
+const getBusinessHoursByDate = (date: Date) => getBusinessHours(formatDateKey(date));
 
 const buildDateWithTime = (dateText: string, timeText: string): Date => {
   return new Date(`${dateText}T${timeText}:00`);
@@ -190,101 +169,14 @@ const getCalendarStatusLabelSQL = `
 `;
 
 // =========================================================================
-// VALIDAR DISPONIBILIDAD
+// VALIDAR DISPONIBILIDAD (fuente única para slots y mutaciones)
 // =========================================================================
-
-const checkAvailability = async (
+const checkAvailability = (
   appointmentDate: string,
   serviceId: number,
-  excludeAppointmentId?: number
-) => {
-  const serviceQuery = `
-    SELECT id, name, price, duration_minutes, is_active
-    FROM operations.services
-    WHERE id = $1;
-  `;
-
-  const serviceResult = await pool.query(serviceQuery, [serviceId]);
-
-  if (serviceResult.rows.length === 0) {
-    return {
-      available: false,
-      reason: 'Servicio no encontrado',
-      service: null,
-      conflicts: 0,
-    };
-  }
-
-  const service = serviceResult.rows[0];
-
-  if (service.is_active === false) {
-    return {
-      available: false,
-      reason: 'El servicio no está activo',
-      service,
-      conflicts: 0,
-    };
-  }
-
-  const startDate = parseDateWithoutTimezone(appointmentDate);
-  const endDate = addMinutes(startDate, Number(service.duration_minutes));
-
-  const businessHours = getBusinessHoursByDate(startDate);
-
-  if (!businessHours) {
-    return {
-      available: false,
-      reason: 'La estética no trabaja los domingos',
-      service,
-      conflicts: 0,
-    };
-  }
-
-  const dateOnly = appointmentDate.split('T')[0] || appointmentDate.split(' ')[0];
-  const openDate = buildDateWithTime(dateOnly, businessHours.open);
-  const closeDate = buildDateWithTime(dateOnly, businessHours.close);
-
-  if (startDate < openDate || endDate > closeDate) {
-    return {
-      available: false,
-      reason: `El horario está fuera del horario laboral (${businessHours.open} a ${businessHours.close})`,
-      service,
-      conflicts: 0,
-    };
-  }
-
-  let conflictQuery = `
-    SELECT COUNT(*)::int AS total
-    FROM operations.appointments a
-    JOIN operations.services s ON s.id = a.service_id
-    WHERE a.status IN ('pending', 'confirmed')
-    AND a.appointment_date < $2::timestamp
-    AND (a.appointment_date + (s.duration_minutes || ' minutes')::interval) > $1::timestamp
-  `;
-
-  const params: any[] = [
-    formatDateForPostgres(startDate),
-    formatDateForPostgres(endDate),
-  ];
-
-  if (excludeAppointmentId) {
-    conflictQuery += ` AND a.id <> $3`;
-    params.push(excludeAppointmentId);
-  }
-
-  const conflictResult = await pool.query(conflictQuery, params);
-  const conflicts = Number(conflictResult.rows[0].total);
-
-  return {
-    available: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS,
-    reason:
-      conflicts < MAX_SIMULTANEOUS_APPOINTMENTS
-        ? 'Horario disponible'
-        : 'Horario no disponible, ya hay 2 citas en ese rango',
-    service,
-    conflicts,
-  };
-};
+  excludeAppointmentId?: number,
+  db: Queryable = pool
+) => checkAppointmentAvailability(db, appointmentDate, serviceId, excludeAppointmentId);
 
 // =========================================================================
 // 1. OBTENER CITAS PARA EL PANEL/CALENDARIO
@@ -329,8 +221,12 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 
         a.service_id,
         s.name AS servicio,
+        s.name AS service_name,
+        s.category AS service_category,
+        s.category,
         s.duration_minutes,
         s.price AS service_price,
+        s.price AS price,
 
         a.appointment_date,
         (a.appointment_date + (s.duration_minutes || ' minutes')::interval) AS appointment_end,
@@ -344,6 +240,7 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
         (a.total_amount - a.deposit_amount) AS remaining_amount,
 
         COALESCE(a.appointment_origin, 'web') AS appointment_origin,
+        COALESCE(a.appointment_origin, 'web') AS origin,
 
         a.created_at,
         a.updated_at
@@ -393,8 +290,12 @@ export const getMyAppointments = async (req: Request, res: Response): Promise<vo
 
         a.service_id,
         s.name AS servicio,
+        s.name AS service_name,
+        s.category AS service_category,
+        s.category,
         s.duration_minutes,
         s.price AS service_price,
+        s.price AS price,
 
         a.appointment_date,
         (a.appointment_date + (s.duration_minutes || ' minutes')::interval) AS appointment_end,
@@ -408,6 +309,7 @@ export const getMyAppointments = async (req: Request, res: Response): Promise<vo
         (a.total_amount - a.deposit_amount) AS remaining_amount,
 
         COALESCE(a.appointment_origin, 'web') AS appointment_origin,
+        COALESCE(a.appointment_origin, 'web') AS origin,
 
         a.created_at,
         a.updated_at
@@ -536,7 +438,7 @@ export const getAvailabilityCalendar = async (req: Request, res: Response): Prom
 
     const serviceResult = await pool.query(
       `
-      SELECT id, name, description, price, duration_minutes, is_active
+      SELECT id, name, description, category, price, duration_minutes, is_active
       FROM operations.services
       WHERE id = $1;
       `,
@@ -560,8 +462,8 @@ export const getAvailabilityCalendar = async (req: Request, res: Response): Prom
     const monthStart = new Date(year, monthIndex, 1, 0, 0, 0);
     const monthEnd = new Date(year, monthIndex + 1, 1, 0, 0, 0);
     const busyIntervals = await getBusyIntervals(monthStart, monthEnd);
-    const now = new Date();
-    const todayKey = formatDateKey(now);
+    const localNow = getLocalNow();
+    const todayKey = localNow.slice(0, 10);
 
     const days = [];
 
@@ -608,7 +510,7 @@ export const getAvailabilityCalendar = async (req: Request, res: Response): Prom
           continue;
         }
 
-        if (startDate <= now) {
+        if (formatDateForPostgres(startDate) <= localNow) {
           current = addMinutes(current, 30);
           continue;
         }
@@ -693,108 +595,55 @@ export const getAppointmentAvailability = async (req: Request, res: Response): P
 export const getAvailableSlots = async (req: Request, res: Response): Promise<void> => {
   try {
     const { date, service_id } = req.query;
-
-    if (!date || !service_id) {
-      res.status(400).json({
-        message: 'date y service_id son obligatorios',
-      });
+    if (!date || !service_id || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      res.status(400).json({ message: 'date (YYYY-MM-DD) y service_id son obligatorios' });
       return;
     }
 
     const serviceResult = await pool.query(
-      `
-      SELECT id, name, description, price, duration_minutes, is_active
-      FROM operations.services
-      WHERE id = $1;
-      `,
-      [Number(service_id)]
+      `SELECT id, name, description, category, price, duration_minutes, is_active
+       FROM operations.services WHERE id = $1`, [Number(service_id)]
     );
-
-    if (serviceResult.rows.length === 0) {
+    if (!serviceResult.rows.length) {
       res.status(404).json({ message: 'Servicio no encontrado' });
       return;
     }
-
     const service = serviceResult.rows[0];
-
     if (service.is_active === false) {
-      res.status(409).json({ message: 'El servicio no esta activo' });
+      res.status(409).json({ message: 'El servicio no está activo' });
       return;
     }
 
-    const testDate = new Date(`${date}T12:00:00`);
-    const businessHours = getBusinessHoursByDate(testDate);
-
-    if (!businessHours) {
-      res.json({
-        date,
-        service,
-        available_slots: [],
-        all_slots: [],
-        message: 'La estética no trabaja los domingos',
-      });
-      return;
-    }
-
-    const openDate = new Date(`${date}T${businessHours.open}:00`);
-    const closeDate = new Date(`${date}T${businessHours.close}:00`);
-    const busyIntervals = await getBusyIntervals(openDate, closeDate);
-
-    const allSlots = [];
-    const availableSlots = [];
-
-    let current = new Date(openDate);
-
-    while (current < closeDate) {
-      const startDate = new Date(current);
-      const endDate = addMinutes(startDate, Number(service.duration_minutes));
-
-      if (endDate > closeDate) {
-        allSlots.push({
-          time: formatDateForPostgres(startDate).substring(11, 16),
-          appointment_date: formatDateForPostgres(startDate),
-          appointment_end: formatDateForPostgres(endDate),
-          available: false,
-          conflicts: 0,
-          reason: 'El servicio ya no cabe antes del cierre',
-        });
-
-        current = addMinutes(current, 30);
-        continue;
-      }
-
-      const conflicts = countOverlappingIntervals(busyIntervals, startDate, endDate);
-
-      const slot = {
-        time: formatDateForPostgres(startDate).substring(11, 16),
-        appointment_date: formatDateForPostgres(startDate),
-        appointment_end: formatDateForPostgres(endDate),
-        available: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS,
-        conflicts,
-        reason: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS ? 'Disponible' : 'Ocupado',
+    const dateText = String(date);
+    const businessHours = getBusinessHours(dateText);
+    const candidateTimes = generateCandidateTimes(dateText, Number(service.duration_minutes));
+    const allSlots = await Promise.all(candidateTimes.map(async (time) => {
+      const availability = await checkAvailability(`${dateText} ${time}:00`, Number(service_id));
+      return {
+        time,
+        appointment_date: availability.appointmentDate || `${dateText} ${time}:00`,
+        appointment_end: availability.appointmentEnd,
+        available: availability.available,
+        conflicts: availability.conflicts,
+        reason: availability.reason,
       };
-
-      allSlots.push(slot);
-
-      if (slot.available) {
-        availableSlots.push(slot);
-      }
-
-      current = addMinutes(current, 30);
-    }
+    }));
+    const availableSlots = allSlots.filter((slot) => slot.available);
 
     res.json({
-      date,
+      date: dateText,
+      service_id: service.id,
+      service_name: service.name,
+      duration_minutes: service.duration_minutes,
       service,
       business_hours: businessHours,
       available_slots: availableSlots,
       all_slots: allSlots,
+      ...(!businessHours ? { message: 'La estética no trabaja los domingos' } : {}),
     });
   } catch (error) {
     console.error('🔥 Error al obtener horarios:', error);
-    res.status(500).json({
-      message: 'Error interno al obtener horarios',
-    });
+    res.status(500).json({ message: 'Error interno al obtener horarios' });
   }
 };
 
@@ -804,78 +653,51 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
 // =========================================================================
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
+  const client = await pool.connect();
   try {
-    const {
-      service_id,
-      appointment_date,
-      deposit_amount = 0,
-    } = req.body;
-
-    const client_id = (req as any).user?.id;
-
-    if (!client_id) {
-      res.status(401).json({
-        message: 'No se pudo identificar al cliente desde el token',
-      });
+    const { service_id, appointment_date, deposit_amount = 0 } = req.body;
+    const clientId = (req as any).user?.id;
+    if (!clientId) {
+      res.status(401).json({ message: 'No se pudo identificar al cliente desde el token' });
       return;
     }
-
     if (!service_id || !appointment_date) {
-      res.status(400).json({
-        message: 'service_id y appointment_date son obligatorios',
-      });
+      res.status(400).json({ message: 'service_id y appointment_date son obligatorios' });
       return;
     }
 
-    const availability = await checkAvailability(
-      appointment_date,
-      Number(service_id)
-    );
-
+    await client.query('BEGIN');
+    // Serializa las mutaciones de agenda para que validación e INSERT sean atómicos.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('operations.appointments.agenda'))");
+    const availability = await checkAvailability(String(appointment_date), Number(service_id), undefined, client);
     if (!availability.available) {
-      res.status(409).json({
-        message: availability.reason,
-        availability,
-      });
+      await client.query('ROLLBACK');
+      res.status(409).json({ message: availability.reason, availability });
       return;
     }
 
-    const totalAmount = Number(availability.service.price);
-
-    const query = `
-      INSERT INTO operations.appointments (
-        client_id,
-        stylist_id,
-        service_id,
-        appointment_date,
-        status,
-        total_amount,
-        deposit_amount,
-        appointment_origin
-      )
-      VALUES ($1, NULL, $2, $3, 'confirmed', $4, $5, 'web')
-      RETURNING *;
-    `;
-
-    const result = await pool.query(query, [
-      client_id,
-      service_id,
-      appointment_date,
-      totalAmount,
-      deposit_amount,
-    ]);
-
+    const result = await client.query(
+      `INSERT INTO operations.appointments (
+         client_id, stylist_id, service_id, appointment_date, status,
+         total_amount, deposit_amount, appointment_origin
+       ) VALUES ($1, NULL, $2, $3::timestamp, 'confirmed', $4, $5, 'web')
+       RETURNING *`,
+      [clientId, service_id, availability.appointmentDate, Number(availability.service.price), deposit_amount]
+    );
+    await client.query('COMMIT');
     res.status(201).json({
-      message: 'Cita confirmada automaticamente. Te esperamos en el horario seleccionado.',
-      appointment: result.rows[0],
+      message: 'Cita confirmada automáticamente. Te esperamos en el horario seleccionado.',
+      appointment: { ...result.rows[0], appointment_end: availability.appointmentEnd },
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('🔥 Error al crear la cita:', error);
-    res.status(500).json({
-      message: 'Error interno del servidor al crear la cita',
-    });
+    res.status(500).json({ message: 'Error interno del servidor al crear la cita' });
+  } finally {
+    client.release();
   }
 };
+
 
 // =========================================================================
 // 5. CREAR CITA MANUAL DESDE ADMINISTRADOR
@@ -946,6 +768,80 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
     });
   }
 };
+
+// =========================================================================
+// REAGENDAR CITA DEL CLIENTE O ADMINISTRADOR
+// =========================================================================
+export const rescheduleAppointment = async (req: Request, res: Response): Promise<void> => {
+  const client = await pool.connect();
+  try {
+    const appointmentId = Number(req.params.id);
+    const { appointment_date } = req.body;
+    const user = (req as any).user;
+    if (!Number.isInteger(appointmentId) || !appointment_date) {
+      res.status(400).json({ message: 'id y appointment_date son obligatorios' });
+      return;
+    }
+
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('operations.appointments.agenda'))");
+    const currentResult = await client.query(
+      `SELECT a.* FROM operations.appointments a WHERE a.id = $1 FOR UPDATE`, [appointmentId]
+    );
+    if (!currentResult.rows.length) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ message: 'Cita no encontrada' });
+      return;
+    }
+    const current = currentResult.rows[0];
+    if (current.client_id !== user?.id && user?.role !== 'admin') {
+      await client.query('ROLLBACK');
+      res.status(403).json({ message: 'No tienes permiso para reagendar esta cita' });
+      return;
+    }
+    if (!['pending', 'confirmed'].includes(current.status)) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ message: 'Solo se pueden reagendar citas pendientes o confirmadas' });
+      return;
+    }
+    const advanceResult = await client.query(
+      `SELECT appointment_date >=
+        (CURRENT_TIMESTAMP AT TIME ZONE $2) + ($3 * interval '1 hour') AS allowed
+       FROM operations.appointments WHERE id = $1`,
+      [appointmentId, 'America/Mexico_City', MIN_RESCHEDULE_HOURS]
+    );
+    if (!advanceResult.rows[0].allowed) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ message: `Solo puedes reagendar con al menos ${MIN_RESCHEDULE_HOURS} horas de anticipación` });
+      return;
+    }
+
+    const availability = await checkAvailability(String(appointment_date), Number(current.service_id), appointmentId, client);
+    if (!availability.available) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ message: availability.reason, availability });
+      return;
+    }
+    const result = await client.query(
+      `UPDATE operations.appointments
+       SET appointment_date = $1::timestamp, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 RETURNING *`,
+      [availability.appointmentDate, appointmentId]
+    );
+    await client.query('COMMIT');
+    res.json({
+      message: 'Cita reagendada correctamente',
+      appointment: { ...result.rows[0], appointment_end: availability.appointmentEnd },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 Error al reagendar la cita:', error);
+    res.status(500).json({ message: 'Error interno al reagendar la cita' });
+  } finally {
+    client.release();
+  }
+};
+
 
 // =========================================================================
 // 6. ACTUALIZAR ESTADO DE UNA CITA
