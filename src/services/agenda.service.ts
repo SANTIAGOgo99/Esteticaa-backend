@@ -3,6 +3,7 @@ import { Pool, PoolClient } from 'pg';
 export const BUSINESS_TIME_ZONE = 'America/Mexico_City';
 export const MAX_SIMULTANEOUS_APPOINTMENTS = 2;
 export const SLOT_STEP_MINUTES = 30;
+export const MIN_RESCHEDULE_HOURS = 24;
 export const SCHEDULING_STATUSES = ['pending', 'confirmed'] as const;
 
 export type Queryable = Pick<Pool | PoolClient, 'query'>;
@@ -81,6 +82,67 @@ export const generateCandidateTimes = (date: string, durationMinutes: number): s
     starts.push(minutesToTime(current));
   }
   return starts;
+};
+
+export type RescheduleEligibility = {
+  can_reschedule: boolean;
+  reschedule_deadline: string | null;
+  reschedule_reason: string | null;
+};
+
+const subtractLocalHours = (localDateTime: string, hours: number): string => {
+  const [date, time] = localDateTime.split(' ');
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute, second] = time.split(':').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day, hour - hours, minute, second));
+  return [
+    `${result.getUTCFullYear()}-${String(result.getUTCMonth() + 1).padStart(2, '0')}-${String(result.getUTCDate()).padStart(2, '0')}`,
+    `${String(result.getUTCHours()).padStart(2, '0')}:${String(result.getUTCMinutes()).padStart(2, '0')}:${String(result.getUTCSeconds()).padStart(2, '0')}`,
+  ].join(' ');
+};
+
+export const getRescheduleEligibility = (
+  status: string,
+  appointmentDateInput: string,
+  now = getLocalNow()
+): RescheduleEligibility => {
+  const appointmentDate = normalizeLocalDateTime(appointmentDateInput);
+  if (!appointmentDate) {
+    return {
+      can_reschedule: false,
+      reschedule_deadline: null,
+      reschedule_reason: 'La fecha de la cita no es válida para calcular el límite de reagendamiento.',
+    };
+  }
+
+  const rescheduleDeadline = subtractLocalHours(appointmentDate, MIN_RESCHEDULE_HOURS);
+  const statusReasons: Record<string, string> = {
+    canceled: 'Las citas canceladas no pueden reagendarse.',
+    completed: 'Las citas completadas no pueden reagendarse.',
+    no_show: 'Las citas marcadas como no asistidas no pueden reagendarse.',
+  };
+
+  if (!SCHEDULING_STATUSES.includes(status as typeof SCHEDULING_STATUSES[number])) {
+    return {
+      can_reschedule: false,
+      reschedule_deadline: rescheduleDeadline,
+      reschedule_reason: statusReasons[status] || 'El estado actual de la cita no permite reagendarla.',
+    };
+  }
+
+  if (now > rescheduleDeadline) {
+    return {
+      can_reschedule: false,
+      reschedule_deadline: rescheduleDeadline,
+      reschedule_reason: 'Esta cita ya no puede reagendarse porque faltan menos de 24 horas.',
+    };
+  }
+
+  return {
+    can_reschedule: true,
+    reschedule_deadline: rescheduleDeadline,
+    reschedule_reason: null,
+  };
 };
 
 export type AvailabilityResult = {

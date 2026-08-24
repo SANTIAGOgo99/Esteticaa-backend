@@ -4,6 +4,7 @@ const {
   generateCandidateTimes,
   getBusinessHours,
   checkAppointmentAvailability,
+  getRescheduleEligibility,
 } = require('../dist/services/agenda.service.js');
 
 const monday = '2030-01-07';
@@ -70,11 +71,43 @@ test('cambiar duration_minutes recalcula inmediatamente el final y los slots', (
   assert.equal(generateCandidateTimes(monday, 120).at(-1), '17:00');
 });
 
-test('reglas de 24 horas: 48 permite y 10 rechaza', () => {
-  const enoughHours = (now, appointment, hours = 24) =>
-    (new Date(appointment).getTime() - new Date(now).getTime()) >= hours * 3600000;
-  assert.equal(enoughHours('2030-01-01T10:00:00Z', '2030-01-03T10:00:00Z'), true);
-  assert.equal(enoughHours('2030-01-01T10:00:00Z', '2030-01-01T20:00:00Z'), false);
+test('una cita pendiente dentro de 48 horas puede reagendarse', () => {
+  assert.deepEqual(
+    getRescheduleEligibility('pending', '2030-01-03 10:00:00', '2030-01-01 10:00:00'),
+    {
+      can_reschedule: true,
+      reschedule_deadline: '2030-01-02 10:00:00',
+      reschedule_reason: null,
+    }
+  );
+});
+
+test('una cita confirmada dentro de 10 horas no puede reagendarse', () => {
+  assert.deepEqual(
+    getRescheduleEligibility('confirmed', '2030-01-01 20:00:00', '2030-01-01 10:00:00'),
+    {
+      can_reschedule: false,
+      reschedule_deadline: '2029-12-31 20:00:00',
+      reschedule_reason: 'Esta cita ya no puede reagendarse porque faltan menos de 24 horas.',
+    }
+  );
+});
+
+test('una cita exactamente a 24 horas todavía puede reagendarse', () => {
+  assert.equal(
+    getRescheduleEligibility('confirmed', '2030-01-02 10:00:00', '2030-01-01 10:00:00').can_reschedule,
+    true
+  );
+});
+
+test('canceled, completed y no_show nunca pueden reagendarse', () => {
+  const canceled = getRescheduleEligibility('canceled', '2030-01-03 10:00:00', '2030-01-01 10:00:00');
+  const completed = getRescheduleEligibility('completed', '2030-01-03 10:00:00', '2030-01-01 10:00:00');
+  const noShow = getRescheduleEligibility('no_show', '2030-01-03 10:00:00', '2030-01-01 10:00:00');
+  assert.equal(canceled.can_reschedule, false);
+  assert.equal(canceled.reschedule_reason, 'Las citas canceladas no pueden reagendarse.');
+  assert.equal(completed.can_reschedule, false);
+  assert.equal(noShow.can_reschedule, false);
 });
 
 test('cancelación y no_show permanecen como estados diferenciados', () => {

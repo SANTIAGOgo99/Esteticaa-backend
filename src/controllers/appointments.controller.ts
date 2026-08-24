@@ -7,6 +7,7 @@ import {
   generateCandidateTimes,
   getBusinessHours,
   getLocalNow,
+  getRescheduleEligibility,
   Queryable,
 } from '../services/agenda.service';
 
@@ -17,7 +18,6 @@ const VALID_DB_STATUSES = ['pending', 'confirmed', 'completed', 'canceled', 'no_
 const VALID_ORIGINS = ['web', 'presencial'];
 
 const MIN_CLIENT_CANCEL_HOURS = 24;
-const MIN_RESCHEDULE_HOURS = 24;
 
 // =========================================================================
 // FUNCIONES AUXILIARES
@@ -298,6 +298,7 @@ export const getMyAppointments = async (req: Request, res: Response): Promise<vo
         s.price AS price,
 
         a.appointment_date,
+        a.appointment_date::text AS appointment_date_local,
         (a.appointment_date + (s.duration_minutes || ' minutes')::interval) AS appointment_end,
 
         a.status,
@@ -322,9 +323,14 @@ export const getMyAppointments = async (req: Request, res: Response): Promise<vo
 
     const result = await pool.query(query, [clientId]);
 
+    const appointments = result.rows.map(({ appointment_date_local, ...appointment }) => ({
+      ...appointment,
+      ...getRescheduleEligibility(appointment.status, appointment_date_local),
+    }));
+
     res.json({
       total: result.rows.length,
-      appointments: result.rows,
+      appointments,
     });
   } catch (error) {
     console.error('🔥 Error al obtener citas del cliente:', error);
@@ -786,7 +792,8 @@ export const rescheduleAppointment = async (req: Request, res: Response): Promis
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('operations.appointments.agenda'))");
     const currentResult = await client.query(
-      `SELECT a.* FROM operations.appointments a WHERE a.id = $1 FOR UPDATE`, [appointmentId]
+      `SELECT a.*, a.appointment_date::text AS appointment_date_local
+       FROM operations.appointments a WHERE a.id = $1 FOR UPDATE`, [appointmentId]
     );
     if (!currentResult.rows.length) {
       await client.query('ROLLBACK');
@@ -799,20 +806,10 @@ export const rescheduleAppointment = async (req: Request, res: Response): Promis
       res.status(403).json({ message: 'No tienes permiso para reagendar esta cita' });
       return;
     }
-    if (!['pending', 'confirmed'].includes(current.status)) {
+    const eligibility = getRescheduleEligibility(current.status, current.appointment_date_local);
+    if (!eligibility.can_reschedule) {
       await client.query('ROLLBACK');
-      res.status(409).json({ message: 'Solo se pueden reagendar citas pendientes o confirmadas' });
-      return;
-    }
-    const advanceResult = await client.query(
-      `SELECT appointment_date >=
-        (CURRENT_TIMESTAMP AT TIME ZONE $2) + ($3 * interval '1 hour') AS allowed
-       FROM operations.appointments WHERE id = $1`,
-      [appointmentId, 'America/Mexico_City', MIN_RESCHEDULE_HOURS]
-    );
-    if (!advanceResult.rows[0].allowed) {
-      await client.query('ROLLBACK');
-      res.status(409).json({ message: `Solo puedes reagendar con al menos ${MIN_RESCHEDULE_HOURS} horas de anticipación` });
+      res.status(409).json({ message: eligibility.reschedule_reason, ...eligibility });
       return;
     }
 
