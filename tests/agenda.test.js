@@ -5,6 +5,7 @@ const {
   getBusinessHours,
   checkAppointmentAvailability,
   getRescheduleEligibility,
+  getAppointmentTimeRemaining,
 } = require('../dist/services/agenda.service.js');
 
 const monday = '2030-01-07';
@@ -31,19 +32,101 @@ test('domingo no genera horarios', () => {
   assert.deepEqual(generateCandidateTimes(sunday, 60), []);
 });
 
-const mockDb = (duration, conflicts) => ({
+const mockDb = (duration, conflicts, clientConflicts = 0) => ({
   calls: 0,
   async query() {
     this.calls += 1;
     if (this.calls === 1) return { rows: [{ id: 1, name: 'Servicio', category: 'General', price: 100, duration_minutes: duration, is_active: true }] };
-    return { rows: [{ total: conflicts, appointment_end: `2030-01-07 ${duration === 60 ? '12:30' : '13:30'}:00` }] };
+    return { rows: [{ total: conflicts, client_conflicts: clientConflicts, appointment_end: `2030-01-07 ${duration === 60 ? '12:30' : '13:30'}:00` }] };
   },
 });
 
 test('dos traslapes activos consumen capacidad y rechazan una tercera cita', async () => {
-  const result = await checkAppointmentAvailability(mockDb(60, 2), '2030-01-07 11:30:00', 1, undefined, '2030-01-01 00:00:00');
+  const result = await checkAppointmentAvailability(mockDb(60, 2), '2030-01-07 11:30:00', 1, undefined, undefined, '2030-01-01 00:00:00');
   assert.equal(result.available, false);
   assert.equal(result.code, 'CAPACITY');
+});
+
+
+
+test('dos clientes distintos pueden ocupar los dos espacios simultáneos', async () => {
+  const result = await checkAppointmentAvailability(
+    mockDb(60, 1, 0), '2030-01-07 11:30:00', 1, undefined, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, true);
+  assert.equal(result.conflicts, 1);
+  assert.equal(result.clientConflicts, 0);
+});
+
+test('un tercer cliente no puede entrar cuando la capacidad global está llena', async () => {
+  const result = await checkAppointmentAvailability(
+    mockDb(60, 2, 0), '2030-01-07 11:30:00', 1, undefined, 18, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, false);
+  assert.equal(result.code, 'CAPACITY');
+});
+
+test('un cliente no puede reservar una segunda cita traslapada', async () => {
+  const result = await checkAppointmentAvailability(
+    mockDb(60, 1, 1), '2030-01-07 11:30:00', 1, undefined, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, false);
+  assert.equal(result.code, 'CLIENT_CONFLICT');
+  assert.equal(result.reason, 'Ya tienes otra cita que se cruza con este horario.');
+});
+
+test('el mismo cliente puede reservar justo cuando termina su cita anterior', async () => {
+  const db = mockDb(60, 0, 0);
+  let overlapSql = '';
+  const original = db.query.bind(db);
+  db.query = async function (...args) {
+    if (this.calls === 1) overlapSql = args[0];
+    return original(...args);
+  };
+  const result = await checkAppointmentAvailability(
+    db, '2030-01-07 12:00:00', 1, undefined, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, true);
+  assert.match(overlapSql, /ends_at > points\.point/);
+});
+
+test('canceled, completed y no_show no bloquean el auto-traslape', async () => {
+  const db = mockDb(60, 0, 0);
+  let overlapSql = '';
+  const original = db.query.bind(db);
+  db.query = async function (...args) {
+    if (this.calls === 1) overlapSql = args[0];
+    return original(...args);
+  };
+  const result = await checkAppointmentAvailability(
+    db, '2030-01-07 11:30:00', 1, undefined, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, true);
+  assert.match(overlapSql, /status IN \('pending', 'confirmed'\)/);
+});
+
+test('reagendamiento detecta otra cita propia y excluye la cita reagendada', async () => {
+  const db = mockDb(60, 1, 1);
+  let conflictSql = '';
+  let conflictParams = [];
+  const original = db.query.bind(db);
+  db.query = async function (...args) {
+    if (this.calls === 1) [conflictSql, conflictParams] = args;
+    return original(...args);
+  };
+  const result = await checkAppointmentAvailability(
+    db, '2030-01-07 11:30:00', 1, 99, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.code, 'CLIENT_CONFLICT');
+  assert.match(conflictSql, /a\.id <> \$3/);
+  assert.deepEqual(conflictParams.slice(2), [99, 16]);
+});
+
+test('al excluir la propia cita, reagendar es posible si no hay otro conflicto', async () => {
+  const result = await checkAppointmentAvailability(
+    mockDb(60, 0, 0), '2030-01-07 12:00:00', 1, 99, 16, '2030-01-01 00:00:00'
+  );
+  assert.equal(result.available, true);
 });
 
 test('la consulta de traslape usa intervalos completos, no solo horas de inicio', async () => {
@@ -54,14 +137,14 @@ test('la consulta de traslape usa intervalos completos, no solo horas de inicio'
     if (this.calls === 1) overlapSql = args[0];
     return original(...args);
   };
-  const result = await checkAppointmentAvailability(db, '2030-01-07 11:30:00', 1, undefined, '2030-01-01 00:00:00');
+  const result = await checkAppointmentAvailability(db, '2030-01-07 11:30:00', 1, undefined, undefined, '2030-01-01 00:00:00');
   assert.equal(result.conflicts, 1);
   assert.match(overlapSql, /appointment_date </);
   assert.match(overlapSql, /appointment_date \+.*duration_minutes/s);
 });
 
 test('un horario pasado de hoy se rechaza', async () => {
-  const result = await checkAppointmentAvailability(mockDb(60, 0), '2030-01-07 11:00:00', 1, undefined, '2030-01-07 12:00:00');
+  const result = await checkAppointmentAvailability(mockDb(60, 0), '2030-01-07 11:00:00', 1, undefined, undefined, '2030-01-07 12:00:00');
   assert.equal(result.available, false);
   assert.equal(result.code, 'PAST');
 });
@@ -116,6 +199,13 @@ test('cancelación y no_show permanecen como estados diferenciados', () => {
   assert.notEqual(canceled, noShow);
   assert.equal(['pending', 'confirmed'].includes(canceled), false);
   assert.equal(['pending', 'confirmed'].includes(noShow), false);
+});
+
+test('los datos de Mis Citas pueden expresar tiempo restante local sin gobernar la regla de 24 horas', () => {
+  assert.deepEqual(
+    getAppointmentTimeRemaining('2030-01-03 10:30:00', '2030-01-01 10:00:00'),
+    { hours_until_appointment: 48, minutes_until_appointment: 2910 }
+  );
 });
 
 test('un ISO UTC se convierte a la hora local de Huejutla sin desfase', () => {

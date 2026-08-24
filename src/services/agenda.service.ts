@@ -90,6 +90,11 @@ export type RescheduleEligibility = {
   reschedule_reason: string | null;
 };
 
+export type AppointmentTimeRemaining = {
+  hours_until_appointment: number;
+  minutes_until_appointment: number;
+};
+
 const subtractLocalHours = (localDateTime: string, hours: number): string => {
   const [date, time] = localDateTime.split(' ');
   const [year, month, day] = date.split('-').map(Number);
@@ -145,14 +150,40 @@ export const getRescheduleEligibility = (
   };
 };
 
+export const getAppointmentTimeRemaining = (
+  appointmentDateInput: string,
+  now = getLocalNow()
+): AppointmentTimeRemaining => {
+  const appointmentDate = normalizeLocalDateTime(appointmentDateInput);
+  const localNow = normalizeLocalDateTime(now);
+  if (!appointmentDate || !localNow) {
+    return { hours_until_appointment: 0, minutes_until_appointment: 0 };
+  }
+
+  const asLocalMilliseconds = (value: string) => {
+    const [date, time] = value.split(' ');
+    const [year, month, day] = date.split('-').map(Number);
+    const [hour, minute, second] = time.split(':').map(Number);
+    return Date.UTC(year, month - 1, day, hour, minute, second);
+  };
+  const minutes = Math.max(0, Math.floor(
+    (asLocalMilliseconds(appointmentDate) - asLocalMilliseconds(localNow)) / 60000
+  ));
+  return {
+    hours_until_appointment: Math.floor(minutes / 60),
+    minutes_until_appointment: minutes,
+  };
+};
+
 export type AvailabilityResult = {
   available: boolean;
   reason: string;
   service: any | null;
   conflicts: number;
+  clientConflicts?: number;
   appointmentDate?: string;
   appointmentEnd?: string;
-  code?: 'INVALID_DATE' | 'SERVICE_NOT_FOUND' | 'SERVICE_INACTIVE' | 'INVALID_DURATION' | 'CLOSED' | 'OUTSIDE_HOURS' | 'PAST' | 'CAPACITY';
+  code?: 'INVALID_DATE' | 'SERVICE_NOT_FOUND' | 'SERVICE_INACTIVE' | 'INVALID_DURATION' | 'CLOSED' | 'OUTSIDE_HOURS' | 'PAST' | 'CLIENT_CONFLICT' | 'CAPACITY';
 };
 
 export const checkAppointmentAvailability = async (
@@ -160,6 +191,7 @@ export const checkAppointmentAvailability = async (
   appointmentDateInput: string,
   serviceId: number,
   excludeAppointmentId?: number,
+  clientId?: number,
   now = getLocalNow()
 ): Promise<AvailabilityResult> => {
   const appointmentDate = normalizeLocalDateTime(appointmentDateInput);
@@ -193,9 +225,15 @@ export const checkAppointmentAvailability = async (
     params.push(excludeAppointmentId);
     exclusion = `AND a.id <> $${params.length}`;
   }
+  let clientConflictSelect = '0::int AS client_conflicts';
+  if (clientId !== undefined) {
+    params.push(clientId);
+    clientConflictSelect = `COALESCE((SELECT COUNT(*) FROM overlapping WHERE client_id = $${params.length}), 0)::int AS client_conflicts`;
+  }
   const conflictResult = await db.query(
     `WITH overlapping AS (
-       SELECT a.appointment_date AS starts_at,
+       SELECT a.client_id,
+              a.appointment_date AS starts_at,
               a.appointment_date + (existing_service.duration_minutes * interval '1 minute') AS ends_at
        FROM operations.appointments a
        JOIN operations.services existing_service ON existing_service.id = a.service_id
@@ -211,15 +249,26 @@ export const checkAppointmentAvailability = async (
               SELECT COUNT(*) FROM overlapping appointment
               WHERE appointment.starts_at <= points.point AND appointment.ends_at > points.point
             )), 0)::int AS total,
+            ${clientConflictSelect},
             ($1::timestamp + ($2 * interval '1 minute'))::text AS appointment_end
      FROM points`,
     params
   );
   const conflicts = Number(conflictResult.rows[0].total);
+  const clientConflicts = Number(conflictResult.rows[0].client_conflicts || 0);
+  if (clientConflicts > 0) {
+    return {
+      available: false,
+      reason: 'Ya tienes otra cita que se cruza con este horario.',
+      service, conflicts, clientConflicts, appointmentDate,
+      appointmentEnd: conflictResult.rows[0].appointment_end,
+      code: 'CLIENT_CONFLICT',
+    };
+  }
   return {
     available: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS,
     reason: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS ? 'Horario disponible' : 'Horario no disponible: la capacidad de 2 citas simultáneas está completa',
-    service, conflicts, appointmentDate,
+    service, conflicts, clientConflicts, appointmentDate,
     appointmentEnd: conflictResult.rows[0].appointment_end,
     code: conflicts < MAX_SIMULTANEOUS_APPOINTMENTS ? undefined : 'CAPACITY',
   };

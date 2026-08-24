@@ -6,6 +6,7 @@ import {
   checkAppointmentAvailability,
   generateCandidateTimes,
   getBusinessHours,
+  getAppointmentTimeRemaining,
   getLocalNow,
   getRescheduleEligibility,
   Queryable,
@@ -175,8 +176,9 @@ const checkAvailability = (
   appointmentDate: string,
   serviceId: number,
   excludeAppointmentId?: number,
-  db: Queryable = pool
-) => checkAppointmentAvailability(db, appointmentDate, serviceId, excludeAppointmentId);
+  db: Queryable = pool,
+  clientId?: number
+) => checkAppointmentAvailability(db, appointmentDate, serviceId, excludeAppointmentId, clientId);
 
 // =========================================================================
 // 1. OBTENER CITAS PARA EL PANEL/CALENDARIO
@@ -325,6 +327,8 @@ export const getMyAppointments = async (req: Request, res: Response): Promise<vo
 
     const appointments = result.rows.map(({ appointment_date_local, ...appointment }) => ({
       ...appointment,
+      appointment_local: appointment_date_local,
+      ...getAppointmentTimeRemaining(appointment_date_local),
       ...getRescheduleEligibility(appointment.status, appointment_date_local),
     }));
 
@@ -583,7 +587,10 @@ export const getAppointmentAvailability = async (req: Request, res: Response): P
 
     const availability = await checkAvailability(
       String(appointment_date),
-      Number(service_id)
+      Number(service_id),
+      undefined,
+      pool,
+      (req as any).user?.id
     );
 
     res.json(availability);
@@ -624,7 +631,9 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
     const businessHours = getBusinessHours(dateText);
     const candidateTimes = generateCandidateTimes(dateText, Number(service.duration_minutes));
     const allSlots = await Promise.all(candidateTimes.map(async (time) => {
-      const availability = await checkAvailability(`${dateText} ${time}:00`, Number(service_id));
+      const availability = await checkAvailability(
+        `${dateText} ${time}:00`, Number(service_id), undefined, pool, (req as any).user?.id
+      );
       return {
         time,
         appointment_date: availability.appointmentDate || `${dateText} ${time}:00`,
@@ -675,7 +684,9 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     await client.query('BEGIN');
     // Serializa las mutaciones de agenda para que validación e INSERT sean atómicos.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('operations.appointments.agenda'))");
-    const availability = await checkAvailability(String(appointment_date), Number(service_id), undefined, client);
+    const availability = await checkAvailability(
+      String(appointment_date), Number(service_id), undefined, client, clientId
+    );
     if (!availability.available) {
       await client.query('ROLLBACK');
       res.status(409).json({ message: availability.reason, availability });
@@ -727,7 +738,10 @@ export const createManualAppointment = async (req: Request, res: Response): Prom
 
     const availability = await checkAvailability(
       appointment_date,
-      Number(service_id)
+      Number(service_id),
+      undefined,
+      pool,
+      Number(client_id)
     );
 
     if (!availability.available) {
@@ -813,7 +827,9 @@ export const rescheduleAppointment = async (req: Request, res: Response): Promis
       return;
     }
 
-    const availability = await checkAvailability(String(appointment_date), Number(current.service_id), appointmentId, client);
+    const availability = await checkAvailability(
+      String(appointment_date), Number(current.service_id), appointmentId, client, Number(current.client_id)
+    );
     if (!availability.available) {
       await client.query('ROLLBACK');
       res.status(409).json({ message: availability.reason, availability });
@@ -1081,7 +1097,9 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     const availability = await checkAvailability(
       String(newAppointmentDate),
       Number(newServiceId),
-      Number(id)
+      Number(id),
+      pool,
+      Number(currentAppointment.client_id)
     );
 
     if (!availability.available) {
