@@ -18,18 +18,34 @@ import clientsRoutes from './routes/clients.routes';
 dotenv.config();
 const app = express();
 
-// CORS dinámico (igual que lo tienes)
-app.use((req, res, next) => {
-    const allowedOrigins = [
-        'https://stetica.netlify.app',
-        'http://localhost:5173',
-        'http://localhost:5174'
-    ];
-    const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin as string)) {
-        res.header('Access-Control-Allow-Origin', origin);
+const allowedOrigins = new Set([
+    'https://stetica.netlify.app',
+    'http://localhost:5173',
+    'http://localhost:5174'
+]);
+
+const isAllowedVercelFrontendPreview = (origin: string): boolean => {
+    try {
+        const url = new URL(origin);
+        return url.protocol === 'https:'
+            && url.port === ''
+            && /^esteticaa-frontend(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(url.hostname)
+            && url.pathname === '/'
+            && url.username === ''
+            && url.password === '';
+    } catch {
+        return false;
     }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+};
+
+// CORS para producción, desarrollo local y previews legítimos del frontend en Vercel.
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && (allowedOrigins.has(origin) || isAllowedVercelFrontendPreview(origin))) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.vary('Origin');
+    }
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') {
