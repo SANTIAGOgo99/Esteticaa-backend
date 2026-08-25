@@ -1,9 +1,7 @@
 // src/routes/appointments.routes.ts
 import { Router } from 'express';
 import {
-  getAppointments,
   getMyAppointments,
-  cancelMyAppointment,
   updateAppointmentStatus,
   closeAppointment,
   createAppointment,
@@ -11,13 +9,17 @@ import {
   getAvailabilityCalendar,
   rescheduleAppointment,
 } from '../controllers/appointments.controller';
+import {
+  getAppointmentsForAdmin,
+  cancelMyAppointmentFlexible,
+} from '../controllers/appointments.portal.controller';
 
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
 
 const router = Router();
 
-// Obtener todas las citas para admin
-router.get('/', verifyToken, isAdmin, getAppointments);
+// Obtener todas las citas para admin con hora local explícita
+router.get('/', verifyToken, isAdmin, getAppointmentsForAdmin);
 
 // Obtener las citas del cliente autenticado
 router.get('/my', verifyToken, getMyAppointments);
@@ -28,8 +30,8 @@ router.get('/availability-calendar', verifyToken, getAvailabilityCalendar);
 // Obtener horarios disponibles y ocupados
 router.get('/slots', verifyToken, getAvailableSlots);
 
-// Cancelar cita propia del cliente
-router.patch('/:id/cancel', verifyToken, cancelMyAppointment);
+// Cancelar cita propia del cliente. Se permite antes de la cita; dentro de 24h no hay reembolso del anticipo.
+router.patch('/:id/cancel', verifyToken, cancelMyAppointmentFlexible);
 
 // Reagendar cita propia o, para administradores, cualquier cita
 router.patch('/:id/reschedule', verifyToken, rescheduleAppointment);
