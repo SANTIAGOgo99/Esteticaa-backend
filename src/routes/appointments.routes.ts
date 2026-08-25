@@ -5,7 +5,6 @@ import {
   updateAppointmentStatus,
   closeAppointment,
   createAppointment,
-  getAvailableSlots,
   getAvailabilityCalendar,
   rescheduleAppointment,
 } from '../controllers/appointments.controller';
@@ -13,6 +12,7 @@ import {
   getAppointmentsForAdmin,
   cancelMyAppointmentFlexible,
 } from '../controllers/appointments.portal.controller';
+import { getAlexaDurationSlots } from '../controllers/alexaAgenda.controller';
 
 import { verifyToken, isAdmin } from '../middlewares/auth.middleware';
 
@@ -27,8 +27,9 @@ router.get('/my', verifyToken, getMyAppointments);
 // Obtener disponibilidad mensual para calendario de cliente
 router.get('/availability-calendar', verifyToken, getAvailabilityCalendar);
 
-// Obtener horarios disponibles y ocupados
-router.get('/slots', verifyToken, getAvailableSlots);
+// Obtener horarios disponibles y ocupados.
+// El paso de los horarios depende de duration_minutes del servicio.
+router.get('/slots', verifyToken, getAlexaDurationSlots);
 
 // Cancelar cita propia del cliente. Se permite antes de la cita; dentro de 24h no hay reembolso del anticipo.
 router.patch('/:id/cancel', verifyToken, cancelMyAppointmentFlexible);
