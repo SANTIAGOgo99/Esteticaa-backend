@@ -117,6 +117,15 @@ router.put(
   closeAppointment
 );
 
+// Compatibilidad con versiones del frontend que usaban PATCH.
+// Ambas rutas ejecutan exactamente el mismo cierre de cita.
+router.patch(
+  '/:id/close',
+  verifyToken,
+  isAdmin,
+  closeAppointment
+);
+
 // =======================================================
 // CANCELAR CITA
 // Esta es la ruta que faltaba y que usa tu frontend:
