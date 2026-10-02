@@ -149,13 +149,13 @@ const getCalendarStatusSQL = `
     WHEN a.status = 'no_show' THEN 'no_show'
     WHEN a.status = 'completed' THEN 'completed'
 
-    WHEN NOW() < a.appointment_date THEN 'pending'
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') < a.appointment_date THEN 'pending'
 
-    WHEN NOW() >= a.appointment_date
-      AND NOW() < (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') >= a.appointment_date
+      AND (NOW() AT TIME ZONE 'America/Mexico_City') < (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
       THEN 'in_process'
 
-    WHEN NOW() >= (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') >= (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
       AND a.status IN ('pending', 'confirmed')
       THEN 'pending_review'
 
@@ -169,13 +169,13 @@ const getCalendarStatusLabelSQL = `
     WHEN a.status = 'no_show' THEN 'No asistió'
     WHEN a.status = 'completed' THEN 'Finalizada'
 
-    WHEN NOW() < a.appointment_date THEN 'Pendiente'
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') < a.appointment_date THEN 'Pendiente'
 
-    WHEN NOW() >= a.appointment_date
-      AND NOW() < (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') >= a.appointment_date
+      AND (NOW() AT TIME ZONE 'America/Mexico_City') < (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
       THEN 'En proceso'
 
-    WHEN NOW() >= (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
+    WHEN (NOW() AT TIME ZONE 'America/Mexico_City') >= (a.appointment_date + (s.duration_minutes || ' minutes')::interval)
       AND a.status IN ('pending', 'confirmed')
       THEN 'Pendiente de cierre'
 
@@ -1420,6 +1420,56 @@ export const cancelAppointment = async (
   const { id } = req.params;
 
   try {
+    const currentResult = await pool.query(
+      `
+      SELECT
+        a.id,
+        a.status,
+        a.appointment_date,
+        s.duration_minutes
+      FROM operations.appointments a
+      LEFT JOIN operations.services s
+        ON s.id = a.service_id
+      WHERE a.id = $1;
+      `,
+      [id]
+    );
+
+    if (currentResult.rows.length === 0) {
+      res.status(404).json({
+        message: 'Cita no encontrada',
+      });
+      return;
+    }
+
+    const current = currentResult.rows[0];
+
+    if (!['pending', 'confirmed'].includes(current.status)) {
+      res.status(409).json({
+        message: 'Esta cita ya no puede cancelarse porque ya inició, terminó o fue cerrada.',
+      });
+      return;
+    }
+
+    const nowResult = await pool.query(
+      `
+      SELECT
+        (NOW() AT TIME ZONE 'America/Mexico_City') AS now_local,
+        $1::timestamp AS appointment_local;
+      `,
+      [current.appointment_date]
+    );
+
+    const nowLocal = new Date(nowResult.rows[0].now_local);
+    const appointmentLocal = new Date(nowResult.rows[0].appointment_local);
+
+    if (nowLocal >= appointmentLocal) {
+      res.status(409).json({
+        message: 'La cita ya comenzó o la fecha ya pasó; ya no es posible cancelarla.',
+      });
+      return;
+    }
+
     const query = `
       UPDATE operations.appointments
       SET status = 'canceled'
@@ -1427,21 +1477,10 @@ export const cancelAppointment = async (
       RETURNING *;
     `;
 
-    const result = await pool.query(
-      query,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      res.status(404).json({
-        message: 'Cita no encontrada',
-      });
-      return;
-    }
+    const result = await pool.query(query, [id]);
 
     res.json({
-      message:
-        'Cita cancelada correctamente',
+      message: 'Cita cancelada correctamente',
       appointment: result.rows[0],
     });
   } catch (error) {
