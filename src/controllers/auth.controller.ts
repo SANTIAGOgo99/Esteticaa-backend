@@ -2,32 +2,13 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../config/db';
+import { createRegisterHandler } from '../handlers/register';
 
-export const register = async (req: Request, res: Response) => {
-    const { full_name, email, password, phone, role } = req.body;
-    try {
-        // 1. Cifrar contraseña
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        // 2. Guardar en BD (Por defecto, si no mandan rol, es 'client')
-        const userRole = role || 'client'; 
-        
-        // FIX: Cambiamos 'users' por 'auth.users'
-        const result = await pool.query(
-            'INSERT INTO auth.users (full_name, email, password_hash, phone, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, full_name, email, role',
-            [full_name, email, hashedPassword, phone, userRole]
-        );
-
-        res.status(201).json({ message: 'Usuario registrado', user: result.rows[0] });
-    } catch (error: any) {
-        console.error("❌ ERROR AL REGISTRAR:", error); 
-        
-        if(error.code === '23505') return res.status(400).json({ error: 'El correo ya está registrado' });
-        
-        res.status(500).json({ error: 'Error del servidor', detalle: error.message, stack: error });
-    }
-};
+export const register = createRegisterHandler({
+    query: (sql, values) => pool.query(sql, values),
+    hashPassword: password => bcrypt.hash(password, 10),
+    reportFailure: code => console.error('Error al registrar cliente', { code }),
+});
 
 export const login = async (req: Request, res: Response) => {
     const { email, password } = req.body;
